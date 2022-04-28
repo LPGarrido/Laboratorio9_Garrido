@@ -2650,11 +2650,16 @@ extern __bank0 __bit __timeout;
 # 31 "main_lab9.c" 2
 # 46 "main_lab9.c"
 unsigned short CCPR = 0;
-
+unsigned short anterior_s1 = 0;
+unsigned short anterior_s2 = 0;
+uint8_t conteo=0;
+uint8_t contador_ADC=0;
+unsigned short num_ADC = 0;
 
 
 
 void setup(void);
+void RESET_TMR0(uint8_t TMR_VAR);
 unsigned short map(uint8_t val, uint8_t in_min, uint8_t in_max,
             unsigned short out_min, unsigned short out_max);
 
@@ -2662,18 +2667,37 @@ unsigned short map(uint8_t val, uint8_t in_min, uint8_t in_max,
 
 void __attribute__((picinterrupt(("")))) isr (void){
     if(PIR1bits.ADIF){
-        if(ADCON0bits.CHS == 0){
-            CCPR = map(ADRESH, 0, 255, 16, 75);
-            CCPR1L = (uint8_t)(CCPR>>2);
-            CCP1CONbits.DC1B = CCPR & 0b11;
-        }
-        else if(ADCON0bits.CHS == 1){
-            CCPR = map(ADRESH, 0, 255, 16, 75);
-            CCPR2L = (uint8_t)(CCPR>>2);
-            CCP2CONbits.DC2B0 = CCPR & 0b1;
-            CCP2CONbits.DC2B1 = CCPR>>1 & 0b1;
+        if(contador_ADC == 5){
+            contador_ADC = 0;
+            if(ADCON0bits.CHS == 0){
+                CCPR = map(ADRESH, 0, 255, 16, 75);
+                CCPR1L = (uint8_t)(CCPR>>2);
+                CCP1CONbits.DC1B = CCPR & 0b11;
+                ADCON0bits.CHS = 0b0001;
+            }
+            else if(ADCON0bits.CHS == 1){
+                CCPR = map(ADRESH, 0, 255, 16, 75);
+                CCPR2L = (uint8_t)(CCPR>>2);
+                CCP2CONbits.DC2B0 = CCPR & 0b1;
+                CCP2CONbits.DC2B1 = CCPR>>1 & 0b1;
+                ADCON0bits.CHS = 0b0010;
+            }
+            else if(ADCON0bits.CHS == 2){
+                num_ADC = map(ADRESH, 0, 255, 0, 35);
+                ADCON0bits.CHS = 0b0000;
+            }
         }
         PIR1bits.ADIF = 0;
+    }
+
+
+    if (INTCONbits.T0IF){
+        conteo++;
+        contador_ADC++;
+        if(conteo == 35){
+            conteo = 0;
+        }
+        RESET_TMR0(250);
     }
     return;
 }
@@ -2685,13 +2709,22 @@ void main(void) {
     setup();
     while(1){
         if(ADCON0bits.GO == 0){
-            if(ADCON0bits.CHS == 0b0000)
-                ADCON0bits.CHS = 0b0001;
-            else if(ADCON0bits.CHS == 0b0001)
-                ADCON0bits.CHS = 0b0000;
+
+
+
+
+
+
+
             _delay((unsigned long)((40)*(500000/4000000.0)));
 
             ADCON0bits.GO = 1;
+        }
+        if(conteo <= num_ADC){
+            PORTCbits.RC3 = 1;
+        }
+        else {
+            PORTCbits.RC3 = 0;
         }
     }
     return;
@@ -2701,9 +2734,9 @@ void main(void) {
 
 
 void setup(void){
-    ANSEL = 0x03;
+    ANSEL = 0x07;
     ANSELH = 0;
-    TRISA = 0x03;
+    TRISA = 0x07;
     PORTA = 0;
     TRISC = 0;
     PORTC = 0;
@@ -2751,14 +2784,28 @@ void setup(void){
     TRISCbits.TRISC1 = 0;
 
 
+    OPTION_REGbits.T0CS = 0;
+    OPTION_REGbits.PSA = 0;
+    OPTION_REGbits.PS = 0b001;
+    TMR0 = 250;
+
+
     PIR1bits.ADIF = 0;
     PIE1bits.ADIE = 1;
     INTCONbits.PEIE = 1;
     INTCONbits.GIE = 1;
+    INTCONbits.T0IE = 1;
+    INTCONbits.T0IF = 0;
 
 }
-# 165 "main_lab9.c"
+# 206 "main_lab9.c"
 unsigned short map(uint8_t x, uint8_t x0, uint8_t x1,
             unsigned short y0, unsigned short y1){
     return (unsigned short)(y0+((float)(y1-y0)/(x1-x0))*(x-x0));
+}
+
+void RESET_TMR0(uint8_t TMR_VAR){
+    TMR0 = TMR_VAR;
+    INTCONbits.T0IF = 0;
+    return;
 }

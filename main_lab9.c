@@ -44,11 +44,18 @@
  * VARIABLES 
  ------------------------------------------------------------------------------*/
 unsigned short CCPR = 0;        // Variable para almacenar ancho de pulso al hacer la interpolación lineal
+//unsigned short anterior_s1 = 0;
+//unsigned short anterior_s2 = 0;
+uint8_t conteo=0;               // Conteo para PWM manual
+uint8_t contador_ADC=0;
+unsigned short num_ADC = 0;
+unsigned short PWM3 = 0;
 
 /*------------------------------------------------------------------------------
  * PROTOTIPO DE FUNCIONES 
  ------------------------------------------------------------------------------*/
 void setup(void);
+void RESET_TMR0(uint8_t TMR_VAR);   // resetear tmr0
 unsigned short map(uint8_t val, uint8_t in_min, uint8_t in_max, 
             unsigned short out_min, unsigned short out_max);
 /*------------------------------------------------------------------------------
@@ -56,18 +63,38 @@ unsigned short map(uint8_t val, uint8_t in_min, uint8_t in_max,
  ------------------------------------------------------------------------------*/
 void __interrupt() isr (void){
     if(PIR1bits.ADIF){                      // Fue interrupción del ADC?
-        if(ADCON0bits.CHS == 0){            // Verificamos sea AN0 el canal seleccionado
-            CCPR = map(ADRESH, IN_MIN, IN_MAX, OUT_MIN, OUT_MAX); // Valor de ancho de pulso
-            CCPR1L = (uint8_t)(CCPR>>2);    // Guardamos los 8 bits mas significativos en CPR1L
-            CCP1CONbits.DC1B = CCPR & 0b11; // Guardamos los 2 bits menos significativos en DC1B
-        }
-        else if(ADCON0bits.CHS == 1){            // Verificamos sea AN0 el canal seleccionado
-            CCPR = map(ADRESH, IN_MIN, IN_MAX, OUT_MIN, OUT_MAX); // Valor de ancho de pulso
-            CCPR2L = (uint8_t)(CCPR>>2);    // Guardamos los 8 bits mas significativos en CPR1L
-            CCP2CONbits.DC2B0 = CCPR & 0b1; // Guardamos los 2 bits menos significativos en DC1B
-            CCP2CONbits.DC2B1 = CCPR>>1 & 0b1;
+        if(contador_ADC == 5){
+            contador_ADC = 0;
+            if(ADCON0bits.CHS == 0){            // Verificamos sea AN0 el canal seleccionado
+                CCPR = map(ADRESH, IN_MIN, IN_MAX, OUT_MIN, OUT_MAX); // Valor de ancho de pulso
+                CCPR1L = (uint8_t)(CCPR>>2);    // Guardamos los 8 bits mas significativos en CPR1L
+                CCP1CONbits.DC1B = CCPR & 0b11; // Guardamos los 2 bits menos significativos en DC1B
+                ADCON0bits.CHS = 0b0001;
+            }
+            else if(ADCON0bits.CHS == 1){            // Verificamos sea AN0 el canal seleccionado
+                CCPR = map(ADRESH, IN_MIN, IN_MAX, OUT_MIN, OUT_MAX); // Valor de ancho de pulso
+                CCPR2L = (uint8_t)(CCPR>>2);    // Guardamos los 8 bits mas significativos en CPR1L
+                CCP2CONbits.DC2B0 = CCPR & 0b1; // Guardamos los 2 bits menos significativos en DC1B
+                CCP2CONbits.DC2B1 = CCPR>>1 & 0b1;
+                ADCON0bits.CHS = 0b0010;
+            }
+            else if(ADCON0bits.CHS == 2){            // Verificamos sea AN0 el canal seleccionado
+                num_ADC = map(ADRESH, IN_MIN, IN_MAX, 0, 35);
+                ADCON0bits.CHS = 0b0000;   
+            }    
         }
         PIR1bits.ADIF = 0;                  // Limpiamos bandera de interrupción
+    }
+    
+     
+    if (INTCONbits.T0IF){
+        conteo++;
+        contador_ADC++;
+        if(conteo == 36){
+            conteo = 0;
+            PWM3 = num_ADC;
+        }
+        RESET_TMR0(250);            // Reseteo cada 0.2 ms
     }
     return;
 }
@@ -79,13 +106,22 @@ void main(void) {
     setup();
     while(1){
         if(ADCON0bits.GO == 0){             // No hay proceso de conversion 
-            if(ADCON0bits.CHS == 0b0000)    
+            /*if(ADCON0bits.CHS == 0b0000)    
                 ADCON0bits.CHS = 0b0001;    // Cambio de canal
             else if(ADCON0bits.CHS == 0b0001)
+                ADCON0bits.CHS = 0b0010;    // Cambio de canal
+            else if(ADCON0bits.CHS == 0b0010)
                 ADCON0bits.CHS = 0b0000;    // Cambio de canal
+            */
             __delay_us(40);                 // Tiempo de adquisici?n
             
             ADCON0bits.GO = 1;              // Iniciamos proceso de conversi?n
+        }
+        if(conteo <= PWM3){
+            PORTCbits.RC3 = 1;
+        }
+        else {
+            PORTCbits.RC3 = 0;
         }
     }
     return;
@@ -95,9 +131,9 @@ void main(void) {
  * CONFIGURACION 
  ------------------------------------------------------------------------------*/
 void setup(void){
-    ANSEL = 0x03;                // AN0 y AN1 como entrada analógica
+    ANSEL = 0x07;                // AN0, AN1 y AN2 como entrada analógica
     ANSELH = 0;                 // I/O digitales
-    TRISA = 0x03;                // AN0 y AN1 como entrada
+    TRISA = 0x07;                // AN0, AN1 y AN2 como entrada
     PORTA = 0;                      
     TRISC = 0;                // PORTC como salida
     PORTC = 0;                      
@@ -107,7 +143,7 @@ void setup(void){
     OSCCONbits.SCS = 1;         // Oscilador interno
     
     // Configuración ADC
-    ADCON0bits.ADCS = 0b11;     // Fosc/8
+    ADCON0bits.ADCS = 0b11;     // Fosc/XX presonalizada
     ADCON1bits.VCFG0 = 0;       // VDD
     ADCON1bits.VCFG1 = 0;       // VSS
     ADCON0bits.CHS = 0b0000;    // Seleccionamos el AN0
@@ -125,13 +161,13 @@ void setup(void){
     CCP1CONbits.P1M = 0;        // Modo single output
     CCP1CONbits.CCP1M = 0b1100; // PWM
     CCPR1L = 16>>2;
-    CCP1CONbits.DC1B = 16 & 0b11;    // 0.5ms ancho de pulso / 25% ciclo de trabajo
+    CCP1CONbits.DC1B = 16 & 0b11;    // 
     // CCP2 para SERVO 2
-    TRISCbits.TRISC1 = 1;       // Deshabilitamos salida de CCP1
+    TRISCbits.TRISC1 = 1;       // Deshabilitamos salida de CCP2
     CCP2CON = 0;                // Apagamos CCP2
     CCP2CONbits.CCP2M = 0b1100; // PWM
     CCPR2L = 16>>2;
-    CCP2CONbits.DC2B0 = 16 & 0b1; // Guardamos los 2 bits menos significativos en DC1B
+    CCP2CONbits.DC2B0 = 16 & 0b1; // 
     CCP2CONbits.DC2B1 = 16>>1 & 0b1;
     
     // Configuracion del TMR2
@@ -144,11 +180,19 @@ void setup(void){
     TRISCbits.TRISC2 = 0;       // Habilitamos salida de PWM
     TRISCbits.TRISC1 = 0;       // Habilitamos salida de PWM
 
+    // TMR0
+    OPTION_REGbits.T0CS = 0;    // TMR0 como temporizador
+    OPTION_REGbits.PSA = 0;     // prescaler a TMR0
+    OPTION_REGbits.PS = 0b001;  // prescaler (001) = 1:4
+    TMR0 = 250;
+    
     // Configuracion interrupciones
     PIR1bits.ADIF = 0;          // Limpiamos bandera de ADC
     PIE1bits.ADIE = 1;          // Habilitamos interrupcion de ADC
     INTCONbits.PEIE = 1;        // Habilitamos int. de perifericos
     INTCONbits.GIE = 1;         // Habilitamos int. globales
+    INTCONbits.T0IE = 1;        // Habilitamos interrupciones del TMR0
+    INTCONbits.T0IF = 0;        // Limpiamos bandera de interrupción
     
 }
 
@@ -165,4 +209,10 @@ void setup(void){
 unsigned short map(uint8_t x, uint8_t x0, uint8_t x1, 
             unsigned short y0, unsigned short y1){
     return (unsigned short)(y0+((float)(y1-y0)/(x1-x0))*(x-x0));
+}
+
+void RESET_TMR0(uint8_t TMR_VAR){
+    TMR0 = TMR_VAR;                 // TMR0 = valor
+    INTCONbits.T0IF = 0;            // Limpiamos bandera de interrupción
+    return;
 }
